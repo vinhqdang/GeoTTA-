@@ -21,10 +21,13 @@ class GeometricBridge(nn.Module):
         self.clip_model.eval()
         for param in self.clip_model.parameters():
             param.requires_grad = False
+        
+        # Get CLIP feature dimension based on model type
+        self.clip_dim = self._get_clip_dimension(config['model']['clip_model'])
             
         # Geometric transformation layers (only these are trainable)
-        self.image_proj = nn.Linear(512, dim)  # CLIP ViT-B/32 outputs 512d
-        self.text_proj = nn.Linear(512, dim)
+        self.image_proj = nn.Linear(self.clip_dim, dim)
+        self.text_proj = nn.Linear(self.clip_dim, dim)
         
         # Cross-modal attention for geometric alignment
         self.cross_attention = nn.MultiheadAttention(
@@ -44,13 +47,27 @@ class GeometricBridge(nn.Module):
         )
         
         # Output projection
-        self.output_proj = nn.Linear(dim, 512)
+        self.output_proj = nn.Linear(dim, self.clip_dim)
         
         # Learnable temperature for calibration
         self.temperature = nn.Parameter(torch.ones(1) * config['model']['temperature'])
         
         # Cache for text prototypes
         self.text_prototype_cache = None
+    
+    def _get_clip_dimension(self, clip_model_name: str) -> int:
+        """Get feature dimension for different CLIP models."""
+        if 'ViT-B/32' in clip_model_name or 'ViT-B/16' in clip_model_name:
+            return 512
+        elif 'ViT-L/14' in clip_model_name:
+            return 768  
+        elif 'RN50' in clip_model_name:
+            return 1024
+        elif 'RN101' in clip_model_name:
+            return 512
+        else:
+            # Default to 512 for unknown models
+            return 512
         
     def forward(self, images: torch.Tensor, texts: Optional[torch.Tensor] = None, 
                 return_uncertainty: bool = True) -> Dict[str, torch.Tensor]:
@@ -111,7 +128,7 @@ class GeometricBridge(nn.Module):
         if self.text_prototype_cache is None:
             # Create dummy prototypes - in practice these would be precomputed
             device = next(self.parameters()).device
-            self.text_prototype_cache = torch.randn(1000, 512, device=device)
+            self.text_prototype_cache = torch.randn(1000, self.clip_dim, device=device)
             self.text_prototype_cache = F.normalize(self.text_prototype_cache, p=2, dim=-1)
         return self.text_prototype_cache
     
